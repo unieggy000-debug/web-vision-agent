@@ -1,0 +1,19 @@
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.DS_Store
+Thumbs.db
+
+# Local captures and generated library data
+screenshots/
+data/*
+!data/.gitkeep
+reports/runs/
+reports/html/
+reports/*.md
