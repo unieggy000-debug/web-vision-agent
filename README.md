@@ -1,4 +1,4 @@
-# Weekly Web Research Agent
+# Web Vision Research Agent
 
 本地网页设计调研助手：你下任务，它去网上找真实网站、截图、分析视觉和交互，再把案例存进**你自己的**资料库。
 
