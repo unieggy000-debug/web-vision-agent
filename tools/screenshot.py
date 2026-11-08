@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,9 +17,9 @@ GOTO_TIMEOUT_MS = 15_000
 
 
 def _unique_filename(url: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:8]
-    return f"screenshot_{stamp}_{digest}.png"
+    return f"screenshot_{stamp}_{digest}_{secrets.token_hex(4)}.png"
 
 
 def screenshot(url: str) -> dict:
