@@ -199,6 +199,7 @@ def validate_finish(
     counts = _tool_counts(state.history or [])
     researched = len(state.researched_urls or [])
     saved = len(state.saved_case_ids or [])
+    reused = len(state.reused_case_ids or [])
     skipped = len(state.skipped_urls or [])
     research_tool_calls = counts["research_tool_calls"]
 
@@ -207,6 +208,7 @@ def validate_finish(
         "research_tool_calls": research_tool_calls,
         "screenshots": counts["screenshots"],
         "saved_case_ids": saved,
+        "reused_case_ids": reused,
         "skipped_urls": skipped,
         "report_paths": len(state.report_paths or []),
     }
@@ -325,6 +327,7 @@ def _progress_dict(state: AgentState) -> dict[str, Any]:
         "current_goal": state.current_goal or state.goal,
         "researched_urls": list(state.researched_urls),
         "saved_case_ids": list(state.saved_case_ids),
+        "reused_case_ids": list(state.reused_case_ids),
         "skipped_urls": list(state.skipped_urls),
         "step_count": state.step_count or state.step,
         "last_tool": state.last_tool,
@@ -391,7 +394,9 @@ def _track_progress(
         if result.get("saved") and result.get("case_id"):
             case_id = str(result.get("case_id"))
         elif result.get("reason") == "duplicate_url" and result.get("existing_case_id"):
-            case_id = str(result.get("existing_case_id"))
+            reused_id = str(result.get("existing_case_id"))
+            if reused_id not in state.reused_case_ids:
+                state.reused_case_ids.append(reused_id)
             # Exact URL duplicate from storage layer.
             if url:
                 norm = normalize_url(url) or url.strip()
