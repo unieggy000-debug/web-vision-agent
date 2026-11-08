@@ -170,6 +170,11 @@ def build_run_artifact(
         },
         "final_summary_preview": _summary_preview(state),
         "tool_trace": _tool_trace(history),
+        "task_id": getattr(state, "task_id", "") or None,
+        "batch_id": getattr(state, "batch_id", "") or None,
+        "trace_path": getattr(state, "trace_path", None),
+        "json_parse_failures": getattr(state, "json_parse_failures", 0),
+        "token_usage": getattr(state, "token_usage", None),
         "artifact_path": None,
     }
     return artifact
