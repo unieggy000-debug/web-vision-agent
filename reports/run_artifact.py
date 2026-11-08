@@ -175,6 +175,11 @@ def build_run_artifact(
         "trace_path": getattr(state, "trace_path", None),
         "json_parse_failures": getattr(state, "json_parse_failures", 0),
         "token_usage": getattr(state, "token_usage", None),
+        "token_usage_scope": "decision_llm_only",
+        "vision_token_usage": None,
+        "estimated_api_cost_usd": None,
+        "business_pass": None,
+        "business_pass_reason": None,
         "artifact_path": None,
     }
     return artifact
