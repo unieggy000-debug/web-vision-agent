@@ -17,3 +17,7 @@ data/*
 reports/runs/
 reports/html/
 reports/*.md
+
+# V0.3 local batch artifacts and logs
+reports/batches/
+reports/traces/
