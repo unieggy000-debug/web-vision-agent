@@ -16,7 +16,9 @@ class AgentState:
     step_count: int = 0
     last_tool: str = ""
     researched_urls: list[str] = field(default_factory=list)
-    saved_case_ids: list[str] = field(default_factory=list)
+    saved_case_ids: list[str] = field(default_factory=list)
+
+    reused_case_ids: list[str] = field(default_factory=list)
     skipped_urls: list[str] = field(default_factory=list)
     last_novelty: str = ""
     last_decision: str = ""
