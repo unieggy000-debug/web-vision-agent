@@ -22,6 +22,7 @@ from tools.search import search
 from tools.vision import analyze_visual
 from reports.generate_report import generate_research_report
 from reports.run_artifact import new_run_id, persist_run_artifact, utc_now_iso
+from reports.trace import TraceWriter
 
 MAX_FINISH_VALIDATION_REJECTS = 1
 # Stop when the next action would be the 3rd consecutive identical fingerprint.
@@ -434,9 +435,17 @@ def _ask_llm(
         extra_body={"thinking": {"type": "disabled"}},
     )
     raw = response.choices[0].message.content or "{}"
+    usage = getattr(response, "usage", None)
+    metrics = {
+        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+        "completion_tokens": getattr(usage, "completion_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }
     try:
         data = json.loads(raw)
         if isinstance(data, dict):
+            data["_trace_usage"] = metrics
+            data["_trace_parse_status"] = "ok"
             return data
         return {
             "tool": "finish",
@@ -445,6 +454,8 @@ def _ask_llm(
                 "references": [],
             },
             "thought": "fallback after invalid LLM payload shape",
+            "_trace_usage": metrics,
+            "_trace_parse_status": "invalid_shape",
         }
     except json.JSONDecodeError:
         # Keep the agent loop alive; finish validation will reject empty evidence.
@@ -452,6 +463,8 @@ def _ask_llm(
             "tool": "search_memory",
             "arguments": {"query": goal[:120]},
             "thought": "LLM returned invalid JSON; recovering with a safe memory check.",
+            "_trace_usage": metrics,
+            "_trace_parse_status": "invalid_json",
         }
 
 
@@ -528,6 +541,13 @@ def _finalize_run(state: AgentState) -> None:
     try:
         if not state.ended_at:
             state.ended_at = utc_now_iso()
+        trace = getattr(state, "_trace_writer", None)
+        if trace is not None:
+            trace.finish(
+                state.stop_status or "unknown",
+                saved_case_count=len(state.saved_case_ids or []),
+                researched_url_count=len(state.researched_urls or []),
+            )
         written = persist_run_artifact(
             state,
             model=_model(),
@@ -545,6 +565,9 @@ def _finalize_run(state: AgentState) -> None:
 def run_agent(
     goal: str,
     cancel_event: threading.Event | None = None,
+    *,
+    task_id: str = "",
+    batch_id: str = "",
 ) -> AgentState:
     """
     Core loop:
@@ -560,7 +583,12 @@ def run_agent(
         current_goal=goal,
         run_id=new_run_id(),
         started_at=utc_now_iso(),
+        task_id=task_id,
+        batch_id=batch_id,
     )
+    trace = TraceWriter(state.run_id, task_id=task_id, batch_id=batch_id)
+    state.trace_path = trace.relative_path
+    state._trace_writer = trace
     history: list[dict[str, Any]] = []
 
     if hasattr(sys.stdout, "reconfigure"):
@@ -616,7 +644,20 @@ def run_agent(
         print("=" * 50)
 
         try:
-            decision = _ask_llm(client, goal, history, _progress_dict(state))
+            with trace.span("llm", _model(), step) as llm_span:
+                decision = _ask_llm(client, goal, history, _progress_dict(state))
+                usage = decision.pop("_trace_usage", {})
+                parse_status = decision.pop("_trace_parse_status", "unknown")
+                llm_span.add(parse_status=parse_status, **usage)
+                if parse_status in {"invalid_json", "invalid_shape"}:
+                    state.json_parse_failures += 1
+                if any(usage.get(k) is not None for k in ("prompt_tokens", "completion_tokens", "total_tokens")):
+                    state.token_usage["observed_calls"] += 1
+                    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                        if usage.get(key) is not None:
+                            state.token_usage[key] = (state.token_usage.get(key) or 0) + int(usage[key])
+                else:
+                    state.token_usage["missing_calls"] += 1
             llm_errors = 0
         except Exception as exc:
             llm_errors += 1
@@ -671,7 +712,10 @@ def run_agent(
             _finalize_run(state)
             return state
 
-        result = _run_tool(tool, arguments)
+        with trace.span("tool", str(tool), step) as tool_span:
+            result = _run_tool(tool, arguments)
+            if isinstance(result, dict):
+                tool_span.add(ok=result.get("ok"))
         print(f"Tool result: {json.dumps(result, ensure_ascii=False, indent=2)}")
         print()
 
