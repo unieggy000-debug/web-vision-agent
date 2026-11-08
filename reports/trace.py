@@ -6,6 +6,7 @@ arguments are included. Unsupported/unknown costs remain null.
 from __future__ import annotations
 import json
 import re
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ def now_iso():
 class TraceSpan:
     def __init__(self, writer, kind, name, step):
         self.writer, self.kind, self.name, self.step = writer, kind, name, step
+        self.span_id = secrets.token_hex(8)
         self.started_at = now_iso()
         self.started_mono = time.monotonic()
         self.details = {}
@@ -35,6 +37,7 @@ class TraceSpan:
     def __exit__(self, exc_type, exc, tb):
         self.writer.emit({
             "event": "span", "kind": self.kind, "name": self.name,
+            "span_id": self.span_id, "parent_span_id": None,
             "step": self.step, "started_at": self.started_at,
             "ended_at": now_iso(),
             "duration_ms": round((time.monotonic() - self.started_mono) * 1000, 2),
@@ -48,6 +51,7 @@ class TraceSpan:
 class TraceWriter:
     ALLOWED = {
         "event", "kind", "name", "step", "at", "started_at", "ended_at",
+        "span_id", "parent_span_id", "cost_usd",
         "duration_ms", "ok", "error_type", "schema_version",
         "prompt_tokens", "completion_tokens", "total_tokens", "parse_status",
         "stop_status", "saved_case_count", "researched_url_count",
