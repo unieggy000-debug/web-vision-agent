@@ -5,12 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import os
 from pathlib import Path
 
 from openai import OpenAI
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ENV_PATH = PROJECT_ROOT / ".env"
+ENV_PATH = Path(os.environ.get("VISION_AGENT_ENV_FILE") or (PROJECT_ROOT / ".env"))
 PLACEHOLDER_KEYS = {"", "your_api_key_here"}
 
 ANALYSIS_KEYS = (
