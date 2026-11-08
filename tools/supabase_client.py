@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from supabase import Client, create_client
 
-ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+ENV_PATH = Path(os.environ.get("VISION_AGENT_ENV_FILE") or (Path(__file__).resolve().parent.parent / ".env"))
 PLACEHOLDER_KEYS = {"", "your_api_key_here", "..."}
 
 _client: Client | None = None
