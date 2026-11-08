@@ -68,7 +68,9 @@ Check:
 
 Offline regression:
 
-    python -m unittest scripts.test_batch_v03 scripts.test_finish_validation scripts.test_run_packaging
+    python -m unittest scripts.test_batch_v03
+    python scripts/test_finish_validation.py
+    python scripts/test_run_packaging.py
 
 ## Recovery vs reproduction
 
