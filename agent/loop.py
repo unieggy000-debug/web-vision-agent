@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import os
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,7 @@ EMERGENCY_STEP_CEILING = 500
 MAX_CONSECUTIVE_LLM_ERRORS = 3
 ANALYSIS_TOOLS = {"analyze_visual", "inspect_interaction", "inspect_frontend"}
 PLACEHOLDER_KEYS = {"", "your_api_key_here"}
-ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+ENV_PATH = Path(os.environ.get("VISION_AGENT_ENV_FILE") or (Path(__file__).resolve().parent.parent / ".env"))
 
 
 def _project_env() -> dict[str, str]:
