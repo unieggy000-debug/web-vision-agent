@@ -78,3 +78,17 @@ Production retry: rerun only failed jobs after inspecting failure reasons.
 Concurrency bug reproduction: run the involved concurrent subset or the full
 batch in an isolated environment with saved inputs, worker cap, DB snapshot,
 logs and run IDs. Rerunning only 5 failed tasks may NOT reproduce a race.
+
+## Selective recovery vs full concurrency repro
+
+After a batch finishes, prepare a replay containing ONLY non-finished tasks:
+
+    python scripts/prepare_retry_manifest.py reports/batches/<batch_id>/manifest.json
+    python -m agent.batch reports/retry_failed_tasks.json --workers 1
+
+This command is a dry run unless --execute and isolated --env-file are supplied.
+It is not automatic retry; evaluate failure type first.
+
+To reproduce a possible shared-resource race, use the original batch task list
+from its manifest and re-run the entire relevant group with the SAME concurrency
+cap. Logs, original DB snapshot, and task order are needed for deeper diagnosis.
