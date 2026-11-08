@@ -136,6 +136,7 @@ def run_batch(tasks, *, max_workers=2, timeout_s=600, env_file=None, execute=Fal
                 "created_at": now_iso(), "task_count": len(validated),
                 "max_workers": max_workers,
                 "statuses": {task["task_id"]: "pending" for task in validated},
+                "tasks": validated,
                 "results": {}, "completed_at": None}
     path = directory / "manifest.json"
     atomic_json(path, manifest)
