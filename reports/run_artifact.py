@@ -162,6 +162,7 @@ def build_run_artifact(
         "researched_urls": list(getattr(state, "researched_urls", None) or []),
         "skipped_urls": list(getattr(state, "skipped_urls", None) or []),
         "saved_case_ids": list(getattr(state, "saved_case_ids", None) or []),
+        "reused_case_ids": list(getattr(state, "reused_case_ids", None) or []),
         "report_paths": report_paths,
         "report_errors": report_errors,
         "finish_validation": {
