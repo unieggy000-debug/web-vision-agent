@@ -30,6 +30,7 @@ REPEAT_LIMIT = 3
 # Not a research budget. Hard stop only if the loop is clearly runaway.
 EMERGENCY_STEP_CEILING = 500
 MAX_CONSECUTIVE_LLM_ERRORS = 3
+MAX_CONSECUTIVE_JSON_ERRORS = 2  # First malformed response + one repair retry.
 ANALYSIS_TOOLS = {"analyze_visual", "inspect_interaction", "inspect_frontend"}
 PLACEHOLDER_KEYS = {"", "your_api_key_here"}
 ENV_PATH = Path(os.environ.get("VISION_AGENT_ENV_FILE") or (Path(__file__).resolve().parent.parent / ".env"))
@@ -428,49 +429,59 @@ def _ask_llm(
     progress: dict[str, Any],
 ) -> dict[str, Any]:
     """Ask the LLM which tool to call next. Expects a JSON object."""
+    prompt = build_turn_prompt(goal, history, progress)
+    if progress.get("format_retry"):
+        prompt += (
+            "\
+\
+FORMAT REPAIR: Your previous response was not valid tool-decision JSON. "
+            "Return one SMALL valid JSON object with tool, arguments (object), and short thought. "
+            "No markdown, code fences or explanatory text. Do not repeat tool results."
+        )
     response = client.chat.completions.create(
         model=_model(),
         temperature=0,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": build_turn_prompt(goal, history, progress)},
+            {"role": "user", "content": prompt},
         ],
         # Thinking is on by default for deepseek-flash; turn it off to keep this loop cheap.
         extra_body={"thinking": {"type": "disabled"}},
     )
-    raw = response.choices[0].message.content or "{}"
+    raw = response.choices[0].message.content or ""
     usage = getattr(response, "usage", None)
     metrics = {
         "prompt_tokens": getattr(usage, "prompt_tokens", None),
         "completion_tokens": getattr(usage, "completion_tokens", None),
         "total_tokens": getattr(usage, "total_tokens", None),
     }
+    diagnostics = {
+        "_trace_usage": metrics,
+        "_trace_response_chars": len(raw),
+        "_trace_finish_reason": getattr(response.choices[0], "finish_reason", None),
+        "_trace_json_error_pos": None,
+    }
     try:
         data = json.loads(raw)
-        if isinstance(data, dict):
-            data["_trace_usage"] = metrics
-            data["_trace_parse_status"] = "ok"
-            return data
+    except json.JSONDecodeError as exc:
+        # A malformed model response is NOT a research-tool decision.
+        # Caller retries once with explicit format feedback, then stops safely.
         return {
-            "tool": "finish",
-            "arguments": {
-                "summary": "Model returned a non-object JSON payload; stopping safely.",
-                "references": [],
-            },
-            "thought": "fallback after invalid LLM payload shape",
-            "_trace_usage": metrics,
-            "_trace_parse_status": "invalid_shape",
-        }
-    except json.JSONDecodeError:
-        # Keep the agent loop alive; finish validation will reject empty evidence.
-        return {
-            "tool": "search_memory",
-            "arguments": {"query": goal[:120]},
-            "thought": "LLM returned invalid JSON; recovering with a safe memory check.",
-            "_trace_usage": metrics,
+            **diagnostics,
             "_trace_parse_status": "invalid_json",
+            "_trace_json_error_pos": exc.pos,
         }
+
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("tool"), str)
+        or not isinstance(data.get("arguments"), dict)
+    ):
+        return {**diagnostics, "_trace_parse_status": "invalid_shape"}
+    data.update(diagnostics)
+    data["_trace_parse_status"] = "ok"
+    return data
 
 
 def _run_tool(name: str, arguments: dict[str, Any]) -> Any:
@@ -611,6 +622,7 @@ def run_agent(
 
     step = 0
     llm_errors = 0
+    json_error_streak = 0
     while True:
         step += 1
         state.step = step
@@ -650,10 +662,19 @@ def run_agent(
 
         try:
             with trace.span("llm", _model(), step) as llm_span:
-                decision = _ask_llm(client, goal, history, _progress_dict(state))
+                decision = _ask_llm(
+                    client, goal, history,
+                    {**_progress_dict(state), "format_retry": json_error_streak > 0},
+                )
                 usage = decision.pop("_trace_usage", {})
                 parse_status = decision.pop("_trace_parse_status", "unknown")
-                llm_span.add(parse_status=parse_status, **usage)
+                llm_span.add(
+                    parse_status=parse_status,
+                    response_chars=decision.pop("_trace_response_chars", None),
+                    finish_reason=decision.pop("_trace_finish_reason", None),
+                    json_error_pos=decision.pop("_trace_json_error_pos", None),
+                    **usage,
+                )
                 if parse_status in {"invalid_json", "invalid_shape"}:
                     state.json_parse_failures += 1
                 if any(usage.get(k) is not None for k in ("prompt_tokens", "completion_tokens", "total_tokens")):
@@ -684,6 +705,24 @@ def run_agent(
                 _finalize_run(state)
                 return state
             continue
+        # Parse errors are control-plane failures, not tool calls.
+        # Do not append fabricated tools to History or mutate the research State.
+        if parse_status in {"invalid_json", "invalid_shape"}:
+            json_error_streak += 1
+            if json_error_streak >= MAX_CONSECUTIVE_JSON_ERRORS:
+                state.stop_status = "invalid_model_response"
+                state.final_result = {
+                    "ok": False,
+                    "status": "invalid_model_response",
+                    "message": "Model returned invalid decision JSON after a repair retry.",
+                    "parse_status": parse_status,
+                    "progress": _progress_dict(state),
+                }
+                _finalize_run(state)
+                return state
+            continue
+        json_error_streak = 0
+
         tool = decision.get("tool", "")
         arguments = decision.get("arguments") or {}
         if not isinstance(arguments, dict):
