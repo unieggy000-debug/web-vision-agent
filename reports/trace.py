@@ -54,6 +54,7 @@ class TraceWriter:
         "span_id", "parent_span_id", "cost_usd",
         "duration_ms", "ok", "error_type", "schema_version",
         "prompt_tokens", "completion_tokens", "total_tokens", "parse_status",
+        "response_chars", "finish_reason", "json_error_pos",
         "stop_status", "saved_case_count", "researched_url_count",
     }
 
