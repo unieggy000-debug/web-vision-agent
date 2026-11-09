@@ -72,6 +72,20 @@ class DecisionJsonRecoveryTests(unittest.TestCase):
         self.assertEqual(result["_trace_parse_status"], "invalid_shape")
         self.assertNotIn("tool", result)
 
+    def test_explicit_save_requires_case_persistence(self):
+        state = loop.AgentState(
+            goal="研究并保存案例。只研究 https://vercel.com/",
+            current_goal="研究并保存案例。只研究 https://vercel.com/",
+            researched_urls=["https://vercel.com/"],
+            history=[
+                {"step": 1, "tool": "screenshot", "arguments": {}, "result": {"ok": True}},
+                {"step": 2, "tool": "analyze_visual", "arguments": {}, "result": {"ok": True}},
+            ],
+        )
+        validation = loop.validate_finish(state, {"summary": "Research complete"})
+        self.assertFalse(validation["valid"])
+        self.assertIn("persisted", validation["reason"])
+
     def test_repeated_bad_json_stops_without_running_tools(self):
         seen_retries = []
         def bad_decision(client, goal, history, progress):
