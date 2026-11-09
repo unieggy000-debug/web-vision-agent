@@ -214,6 +214,20 @@ def validate_finish(
         "report_paths": len(state.report_paths or []),
     }
 
+    # Explicit case-persistence goals must not finish on analysis alone.
+    # An already persisted, re-used case also counts; an unsaved URL does not.
+    explicit_save = any(
+        marker in goal.lower()
+        for marker in ("save_case", "save case", "保存", "存档")
+    )
+    reused = len(getattr(state, "reused_case_ids", None) or [])
+    if explicit_save and saved == 0 and reused == 0:
+        return {
+            "valid": False,
+            "reason": "The goal explicitly requires a persisted research case, but none was saved or reused.",
+            "evidence": {**evidence, "reused_case_ids": reused},
+        }
+
     tools = [str(h.get("tool") or "") for h in (state.history or [])]
     fetched_cases = sum(1 for t in tools if t == "get_research_cases")
     # Only a successful report path counts — failed generate_research_report does not.
