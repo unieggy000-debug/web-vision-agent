@@ -667,6 +667,7 @@ def run_agent(
                 usage = decision.pop("_trace_usage", {})
                 parse_status = decision.pop("_trace_parse_status", "unknown")
                 llm_span.add(
+                    ok=parse_status == "ok",
                     parse_status=parse_status,
                     response_chars=decision.pop("_trace_response_chars", None),
                     finish_reason=decision.pop("_trace_finish_reason", None),
