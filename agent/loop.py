@@ -432,9 +432,7 @@ def _ask_llm(
     prompt = build_turn_prompt(goal, history, progress)
     if progress.get("format_retry"):
         prompt += (
-            "\
-\
-FORMAT REPAIR: Your previous response was not valid tool-decision JSON. "
+            "\n\nFORMAT REPAIR: Your previous response was not valid tool-decision JSON. "
             "Return one SMALL valid JSON object with tool, arguments (object), and short thought. "
             "No markdown, code fences or explanatory text. Do not repeat tool results."
         )
