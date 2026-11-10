@@ -88,6 +88,14 @@ class IntentRoutingTests(unittest.TestCase):
         self.assertIsNone(normalize_url("file:///etc/passwd"))
         self.assertEqual(extract_urls("研究 https://example.com/"), ["https://example.com"])
 
+    def test_explicit_unsafe_target_fails_closed(self):
+        plan = plan_request("研究 http://127.0.0.1/admin")
+        self.assertEqual(plan["intent"], "unsafe_target")
+        self.assertEqual(plan["status"], "unsupported")
+        self.assertTrue(plan["invalid_target"])
+        self.assertEqual(task_manifest(plan), [])
+        self.assertNotIn("127.0.0.1", plan["original_goal"])
+
     def test_total_targets_capped_and_flagged(self):
         urls = " ".join(f"https://example{i}.com" for i in range(7))
         plan = plan_request("研究 " + urls)
