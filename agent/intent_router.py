@@ -23,6 +23,7 @@ GENERATION_HINTS = (
     "create an app", "generate a template",
 )
 COUNT_RE = re.compile(r"([1-5])\s*(?:个|家|条|款|sites?\b|websites?\b)", re.I)
+GENERATION_RE = re.compile(r"(?:生成|制作|开发|搭建|创建).{0,12}(?:应用|模板|app)", re.I)
 
 
 def normalize_url(value: str) -> str | None:
@@ -76,6 +77,7 @@ def plan_request(goal: str, model_output: dict | None = None) -> dict:
     model_output = model_output if isinstance(model_output, dict) else {}
     wants_generation = (
         any(marker in lowered for marker in GENERATION_HINTS)
+        or bool(GENERATION_RE.search(lowered))
         or model_output.get("wants_app_generation") is True
     )
     research = bool(urls) or any(marker in lowered for marker in RESEARCH_HINTS)
