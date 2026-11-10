@@ -74,6 +74,7 @@ def plan_request(goal: str, model_output: dict | None = None) -> dict:
     goal = goal.strip()
     lowered = goal.lower()
     urls = extract_urls(goal)
+    invalid_target = any(normalize_url(raw) is None for raw in URL_RE.findall(goal))
     model_output = model_output if isinstance(model_output, dict) else {}
     wants_generation = (
         any(marker in lowered for marker in GENERATION_HINTS)
@@ -84,7 +85,9 @@ def plan_request(goal: str, model_output: dict | None = None) -> dict:
     model_intent = model_output.get("intent")
     if not research and model_intent in {"website_research", "website_discovery"}:
         research = True
-    if urls:
+    if invalid_target:
+        intent, status = "unsafe_target", "unsupported"
+    elif urls:
         intent, status = "website_research", "ready"
     elif research:
         intent, status = "website_discovery", "needs_discovery"
@@ -105,7 +108,7 @@ def plan_request(goal: str, model_output: dict | None = None) -> dict:
 
     return {
         "schema_version": 1,
-        "original_goal": goal,
+        "original_goal": "[unsafe URL omitted]" if invalid_target else goal,
         "intent": intent,
         "status": status,
         "target_urls": urls[:MAX_SITES],
@@ -114,6 +117,7 @@ def plan_request(goal: str, model_output: dict | None = None) -> dict:
         "wants_app_generation": wants_generation,
         "app_generation_supported": False,
         "truncated_targets": len(urls) > MAX_SITES,
+        "invalid_target": invalid_target,
     }
 
 
