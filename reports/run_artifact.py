@@ -162,6 +162,7 @@ def build_run_artifact(
         "researched_urls": list(getattr(state, "researched_urls", None) or []),
         "skipped_urls": list(getattr(state, "skipped_urls", None) or []),
         "saved_case_ids": list(getattr(state, "saved_case_ids", None) or []),
+        "reused_case_ids": list(getattr(state, "reused_case_ids", None) or []),
         "report_paths": report_paths,
         "report_errors": report_errors,
         "finish_validation": {
@@ -170,6 +171,16 @@ def build_run_artifact(
         },
         "final_summary_preview": _summary_preview(state),
         "tool_trace": _tool_trace(history),
+        "task_id": getattr(state, "task_id", "") or None,
+        "batch_id": getattr(state, "batch_id", "") or None,
+        "trace_path": getattr(state, "trace_path", None),
+        "json_parse_failures": getattr(state, "json_parse_failures", 0),
+        "token_usage": getattr(state, "token_usage", None),
+        "token_usage_scope": "decision_llm_only",
+        "vision_token_usage": None,
+        "estimated_api_cost_usd": None,
+        "business_pass": None,
+        "business_pass_reason": None,
         "artifact_path": None,
     }
     return artifact

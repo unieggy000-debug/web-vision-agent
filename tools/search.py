@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from urllib.parse import urldefrag, urlparse, urlunparse
 
 PLACEHOLDER_KEYS = {"", "your_api_key_here"}
-ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+ENV_PATH = Path(os.environ.get("VISION_AGENT_ENV_FILE") or (Path(__file__).resolve().parent.parent / ".env"))
 DEFAULT_LIMIT = 3
 HARD_MAX_LIMIT = 8
 FILE_SUFFIXES = (

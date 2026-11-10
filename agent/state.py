@@ -16,7 +16,9 @@ class AgentState:
     step_count: int = 0
     last_tool: str = ""
     researched_urls: list[str] = field(default_factory=list)
-    saved_case_ids: list[str] = field(default_factory=list)
+    saved_case_ids: list[str] = field(default_factory=list)
+
+    reused_case_ids: list[str] = field(default_factory=list)
     skipped_urls: list[str] = field(default_factory=list)
     last_novelty: str = ""
     last_decision: str = ""
@@ -29,5 +31,18 @@ class AgentState:
     started_at: str | None = None
     ended_at: str | None = None
     report_errors: list[dict[str, Any]] = field(default_factory=list)
-    artifact_path: str | None = None
+    artifact_path: str | None = None
+
+    # Batch/trace correlation; separate for every run.
+    task_id: str = ""
+    batch_id: str = ""
+    trace_path: str | None = None
+    json_parse_failures: int = 0
+    token_usage: dict[str, Any] = field(default_factory=lambda: {
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+        "observed_calls": 0,
+        "missing_calls": 0,
+    })
 

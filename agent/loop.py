@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from tools.search import search
 from tools.vision import analyze_visual
 from reports.generate_report import generate_research_report
 from reports.run_artifact import new_run_id, persist_run_artifact, utc_now_iso
+from reports.trace import TraceWriter
 
 MAX_FINISH_VALIDATION_REJECTS = 1
 # Stop when the next action would be the 3rd consecutive identical fingerprint.
@@ -28,9 +30,10 @@ REPEAT_LIMIT = 3
 # Not a research budget. Hard stop only if the loop is clearly runaway.
 EMERGENCY_STEP_CEILING = 500
 MAX_CONSECUTIVE_LLM_ERRORS = 3
+MAX_CONSECUTIVE_JSON_ERRORS = 2  # First malformed response + one repair retry.
 ANALYSIS_TOOLS = {"analyze_visual", "inspect_interaction", "inspect_frontend"}
 PLACEHOLDER_KEYS = {"", "your_api_key_here"}
-ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+ENV_PATH = Path(os.environ.get("VISION_AGENT_ENV_FILE") or (Path(__file__).resolve().parent.parent / ".env"))
 
 
 def _project_env() -> dict[str, str]:
@@ -197,6 +200,7 @@ def validate_finish(
     counts = _tool_counts(state.history or [])
     researched = len(state.researched_urls or [])
     saved = len(state.saved_case_ids or [])
+    reused = len(state.reused_case_ids or [])
     skipped = len(state.skipped_urls or [])
     research_tool_calls = counts["research_tool_calls"]
 
@@ -205,9 +209,24 @@ def validate_finish(
         "research_tool_calls": research_tool_calls,
         "screenshots": counts["screenshots"],
         "saved_case_ids": saved,
+        "reused_case_ids": reused,
         "skipped_urls": skipped,
         "report_paths": len(state.report_paths or []),
     }
+
+    # Explicit case-persistence goals must not finish on analysis alone.
+    # An already persisted, re-used case also counts; an unsaved URL does not.
+    explicit_save = any(
+        marker in goal.lower()
+        for marker in ("save_case", "save case", "保存", "存档")
+    )
+    reused = len(getattr(state, "reused_case_ids", None) or [])
+    if explicit_save and saved == 0 and reused == 0:
+        return {
+            "valid": False,
+            "reason": "The goal explicitly requires a persisted research case, but none was saved or reused.",
+            "evidence": {**evidence, "reused_case_ids": reused},
+        }
 
     tools = [str(h.get("tool") or "") for h in (state.history or [])]
     fetched_cases = sum(1 for t in tools if t == "get_research_cases")
@@ -323,6 +342,7 @@ def _progress_dict(state: AgentState) -> dict[str, Any]:
         "current_goal": state.current_goal or state.goal,
         "researched_urls": list(state.researched_urls),
         "saved_case_ids": list(state.saved_case_ids),
+        "reused_case_ids": list(state.reused_case_ids),
         "skipped_urls": list(state.skipped_urls),
         "step_count": state.step_count or state.step,
         "last_tool": state.last_tool,
@@ -389,7 +409,9 @@ def _track_progress(
         if result.get("saved") and result.get("case_id"):
             case_id = str(result.get("case_id"))
         elif result.get("reason") == "duplicate_url" and result.get("existing_case_id"):
-            case_id = str(result.get("existing_case_id"))
+            reused_id = str(result.get("existing_case_id"))
+            if reused_id not in state.reused_case_ids:
+                state.reused_case_ids.append(reused_id)
             # Exact URL duplicate from storage layer.
             if url:
                 norm = normalize_url(url) or url.strip()
@@ -421,37 +443,57 @@ def _ask_llm(
     progress: dict[str, Any],
 ) -> dict[str, Any]:
     """Ask the LLM which tool to call next. Expects a JSON object."""
+    prompt = build_turn_prompt(goal, history, progress)
+    if progress.get("format_retry"):
+        prompt += (
+            "\n\nFORMAT REPAIR: Your previous response was not valid tool-decision JSON. "
+            "Return one SMALL valid JSON object with tool, arguments (object), and short thought. "
+            "No markdown, code fences or explanatory text. Do not repeat tool results."
+        )
     response = client.chat.completions.create(
         model=_model(),
         temperature=0,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": build_turn_prompt(goal, history, progress)},
+            {"role": "user", "content": prompt},
         ],
         # Thinking is on by default for deepseek-flash; turn it off to keep this loop cheap.
         extra_body={"thinking": {"type": "disabled"}},
     )
-    raw = response.choices[0].message.content or "{}"
+    raw = response.choices[0].message.content or ""
+    usage = getattr(response, "usage", None)
+    metrics = {
+        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+        "completion_tokens": getattr(usage, "completion_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }
+    diagnostics = {
+        "_trace_usage": metrics,
+        "_trace_response_chars": len(raw),
+        "_trace_finish_reason": getattr(response.choices[0], "finish_reason", None),
+        "_trace_json_error_pos": None,
+    }
     try:
         data = json.loads(raw)
-        if isinstance(data, dict):
-            return data
+    except json.JSONDecodeError as exc:
+        # A malformed model response is NOT a research-tool decision.
+        # Caller retries once with explicit format feedback, then stops safely.
         return {
-            "tool": "finish",
-            "arguments": {
-                "summary": "Model returned a non-object JSON payload; stopping safely.",
-                "references": [],
-            },
-            "thought": "fallback after invalid LLM payload shape",
+            **diagnostics,
+            "_trace_parse_status": "invalid_json",
+            "_trace_json_error_pos": exc.pos,
         }
-    except json.JSONDecodeError:
-        # Keep the agent loop alive; finish validation will reject empty evidence.
-        return {
-            "tool": "search_memory",
-            "arguments": {"query": goal[:120]},
-            "thought": "LLM returned invalid JSON; recovering with a safe memory check.",
-        }
+
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("tool"), str)
+        or not isinstance(data.get("arguments"), dict)
+    ):
+        return {**diagnostics, "_trace_parse_status": "invalid_shape"}
+    data.update(diagnostics)
+    data["_trace_parse_status"] = "ok"
+    return data
 
 
 def _run_tool(name: str, arguments: dict[str, Any]) -> Any:
@@ -527,6 +569,13 @@ def _finalize_run(state: AgentState) -> None:
     try:
         if not state.ended_at:
             state.ended_at = utc_now_iso()
+        trace = getattr(state, "_trace_writer", None)
+        if trace is not None:
+            trace.finish(
+                state.stop_status or "unknown",
+                saved_case_count=len(state.saved_case_ids or []),
+                researched_url_count=len(state.researched_urls or []),
+            )
         written = persist_run_artifact(
             state,
             model=_model(),
@@ -544,6 +593,9 @@ def _finalize_run(state: AgentState) -> None:
 def run_agent(
     goal: str,
     cancel_event: threading.Event | None = None,
+    *,
+    task_id: str = "",
+    batch_id: str = "",
 ) -> AgentState:
     """
     Core loop:
@@ -559,7 +611,12 @@ def run_agent(
         current_goal=goal,
         run_id=new_run_id(),
         started_at=utc_now_iso(),
+        task_id=task_id,
+        batch_id=batch_id,
     )
+    trace = TraceWriter(state.run_id, task_id=task_id, batch_id=batch_id)
+    state.trace_path = trace.relative_path
+    state._trace_writer = trace
     history: list[dict[str, Any]] = []
 
     if hasattr(sys.stdout, "reconfigure"):
@@ -577,6 +634,7 @@ def run_agent(
 
     step = 0
     llm_errors = 0
+    json_error_streak = 0
     while True:
         step += 1
         state.step = step
@@ -615,7 +673,30 @@ def run_agent(
         print("=" * 50)
 
         try:
-            decision = _ask_llm(client, goal, history, _progress_dict(state))
+            with trace.span("llm", _model(), step) as llm_span:
+                decision = _ask_llm(
+                    client, goal, history,
+                    {**_progress_dict(state), "format_retry": json_error_streak > 0},
+                )
+                usage = decision.pop("_trace_usage", {})
+                parse_status = decision.pop("_trace_parse_status", "unknown")
+                llm_span.add(
+                    ok=parse_status == "ok",
+                    parse_status=parse_status,
+                    response_chars=decision.pop("_trace_response_chars", None),
+                    finish_reason=decision.pop("_trace_finish_reason", None),
+                    json_error_pos=decision.pop("_trace_json_error_pos", None),
+                    **usage,
+                )
+                if parse_status in {"invalid_json", "invalid_shape"}:
+                    state.json_parse_failures += 1
+                if any(usage.get(k) is not None for k in ("prompt_tokens", "completion_tokens", "total_tokens")):
+                    state.token_usage["observed_calls"] += 1
+                    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                        if usage.get(key) is not None:
+                            state.token_usage[key] = (state.token_usage.get(key) or 0) + int(usage[key])
+                else:
+                    state.token_usage["missing_calls"] += 1
             llm_errors = 0
         except Exception as exc:
             llm_errors += 1
@@ -637,6 +718,24 @@ def run_agent(
                 _finalize_run(state)
                 return state
             continue
+        # Parse errors are control-plane failures, not tool calls.
+        # Do not append fabricated tools to History or mutate the research State.
+        if parse_status in {"invalid_json", "invalid_shape"}:
+            json_error_streak += 1
+            if json_error_streak >= MAX_CONSECUTIVE_JSON_ERRORS:
+                state.stop_status = "invalid_model_response"
+                state.final_result = {
+                    "ok": False,
+                    "status": "invalid_model_response",
+                    "message": "Model returned invalid decision JSON after a repair retry.",
+                    "parse_status": parse_status,
+                    "progress": _progress_dict(state),
+                }
+                _finalize_run(state)
+                return state
+            continue
+        json_error_streak = 0
+
         tool = decision.get("tool", "")
         arguments = decision.get("arguments") or {}
         if not isinstance(arguments, dict):
@@ -670,7 +769,10 @@ def run_agent(
             _finalize_run(state)
             return state
 
-        result = _run_tool(tool, arguments)
+        with trace.span("tool", str(tool), step) as tool_span:
+            result = _run_tool(tool, arguments)
+            if isinstance(result, dict):
+                tool_span.add(ok=result.get("ok"))
         print(f"Tool result: {json.dumps(result, ensure_ascii=False, indent=2)}")
         print()
 

@@ -1,0 +1,29 @@
+name: Intent Router Offline Checks
+
+on:
+  push:
+    branches:
+      - feature/v0.3-batch-trace-isolation
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  intent-routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check Python syntax
+        run: |
+          python -m compileall -q agent/intent_router.py agent/orchestrate.py scripts/test_intent_orchestrate.py scripts/score_intent_eval.py
+      - name: Offline regression
+        run: python -m unittest scripts.test_intent_orchestrate -v
+      - name: Offline task-routing scorecard
+        run: python -m scripts.score_intent_eval

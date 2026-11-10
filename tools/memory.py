@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urldefrag, urlparse, urlunparse
@@ -254,20 +255,12 @@ def _find_by_url(url: str) -> dict | None:
 
 
 def _next_case_id() -> str:
+    """Randomized ID avoids check-then-insert collisions under parallel workers.
+
+    Legacy numeric IDs remain readable; only new IDs change shape.
+    """
     day = datetime.now(timezone.utc).strftime("%Y%m%d")
-    prefix = f"case_{day}_"
-    max_n = 0
-    try:
-        for case in _fetch_all_cases():
-            cid = str(case.get("id") or "")
-            if not cid.startswith(prefix):
-                continue
-            suffix = cid[len(prefix) :]
-            if suffix.isdigit():
-                max_n = max(max_n, int(suffix))
-    except Exception:
-        pass
-    return f"{prefix}{max_n + 1:03d}"
+    return f"case_{day}_{secrets.token_hex(6)}"
 
 
 def _vector_literal(vec: list[float]) -> str:
@@ -369,14 +362,15 @@ def save_case(case: dict | None = None, **kwargs) -> dict:
 
         existing = _find_by_url(url_normalized)
         if existing:
-            emb = update_case_embedding(str(existing.get("id") or ""), existing)
+            # Do not recompute embedding from a partial id/title/url row:
+            # doing so can overwrite an existing full-quality vector.
             return {
                 "ok": True,
                 "saved": False,
                 "reason": "duplicate_url",
                 "existing_case_id": existing.get("id") or "",
-                "embedding_ok": bool(emb.get("ok")),
-                "embedding_error": None if emb.get("ok") else emb.get("error"),
+                "embedding_ok": None,  # existing embedding was not revalidated
+                "embedding_error": None,
                 "error": None,
             }
 
